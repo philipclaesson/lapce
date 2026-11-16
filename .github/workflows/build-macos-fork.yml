@@ -1,0 +1,25 @@
+name: Build macOS app (fork)
+
+on:
+  push:
+    branches: ["pc/**"]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Lapce.app
+        # Ad-hoc signature: the upstream identity's certificate isn't available on a fork.
+        run: make app CODESIGN_IDENTITY=-
+
+      - name: Zip app
+        run: ditto -c -k --keepParent target/release-lto/macos/Lapce.app Lapce-macos-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lapce-macos-arm64
+          path: Lapce-macos-arm64.zip
+          retention-days: 7

@@ -538,7 +538,13 @@ impl ProxyHandler for Dispatcher {
                             id,
                             Ok(ProxyResponse::GitGetRemoteFileUrl { file_url: s }),
                         ),
-                        Err(e) => eprintln!("{e:?}"),
+                        Err(e) => self.proxy_rpc.handle_response(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("{e:#}"),
+                            }),
+                        ),
                     }
                 }
             }
@@ -1632,11 +1638,15 @@ fn file_get_head(workspace_path: &Path, path: &Path) -> Result<(String, String)>
 fn git_get_remote_file_url(workspace_path: &Path, file: &Path) -> Result<String> {
     let repo = Repository::discover(workspace_path)?;
     let head = repo.head()?;
-    let target_remote = repo.find_remote(
-        repo.branch_upstream_remote(head.name().unwrap())?
-            .as_str()
-            .unwrap(),
-    )?;
+    // Unpushed branches have no upstream, so fall back to origin.
+    let remote_name = head
+        .name()
+        .and_then(|name| repo.branch_upstream_remote(name).ok())
+        .and_then(|buf| buf.as_str().map(str::to_string))
+        .unwrap_or_else(|| "origin".to_string());
+    let target_remote = repo
+        .find_remote(&remote_name)
+        .with_context(|| format!("No git remote named '{remote_name}'"))?;
 
     // Grab URL part of remote
     let remote = target_remote
@@ -1664,8 +1674,12 @@ fn git_get_remote_file_url(workspace_path: &Path, file: &Path) -> Result<String>
 
     let commit = head.peel_to_commit()?.id();
 
+    // Relative to the repo root, which may differ from the opened workspace folder.
+    let repo_root = repo
+        .workdir()
+        .ok_or(anyhow!("Repository has no working directory"))?;
     let file_path = file
-        .strip_prefix(workspace_path)?
+        .strip_prefix(repo_root)?
         .to_str()
         .ok_or(anyhow!("Couldn't convert file path to str"))?;
 

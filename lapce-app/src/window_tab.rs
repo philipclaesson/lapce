@@ -25,7 +25,7 @@ use floem::{
         WriteSignal, use_context,
     },
     text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, TextLayout},
-    views::editor::core::buffer::rope_text::RopeText,
+    views::editor::{core::buffer::rope_text::RopeText, text::SystemClipboard},
 };
 use im::HashMap;
 use indexmap::IndexMap;
@@ -1317,7 +1317,9 @@ impl WindowTabData {
                 self.source_control.commit();
             }
             SourceControlCopyActiveFileRemoteUrl => {
-                // TODO:
+                self.with_active_file_remote_url(|url| {
+                    SystemClipboard::new().put_string(url);
+                });
             }
             SourceControlDiscardActiveFileChanges => {
                 // TODO:
@@ -1448,30 +1450,11 @@ impl WindowTabData {
                 }
             }
             SourceControlOpenActiveFileRemoteUrl => {
-                if let Some(editor_data) =
-                    self.main_split.active_editor.get_untracked()
-                {
-                    if let DocContent::File {path, ..} = editor_data.doc().content.get_untracked() {
-                        let offset = editor_data.cursor().with_untracked(|c| c.offset());
-                        let line = editor_data.doc()
-                            .buffer
-                            .with_untracked(|buffer| buffer.line_of_offset(offset));
-                        self.common.proxy.git_get_remote_file_url(
-                            path,
-                            create_ext_action(self.scope, move |result| {
-                                if let Ok(ProxyResponse::GitGetRemoteFileUrl {
-                                              file_url
-                                          }) = result
-                                {
-                                    if let Err(err) = open::that(format!("{}#L{}", file_url, line)) {
-                                        error!("Failed to open file in github: {}",  err);
-                                    }
-                                }
-                            }),
-                        );
-
+                self.with_active_file_remote_url(|url| {
+                    if let Err(err) = open::that(&url) {
+                        error!("Failed to open {url}: {err}");
                     }
-                }
+                });
             }
             RevealInFileExplorer => {
                 if let Some(editor_data) =
@@ -2886,6 +2869,42 @@ impl WindowTabData {
                 }
             },
         }
+    }
+
+    fn with_active_file_remote_url(&self, f: impl FnOnce(String) + 'static) {
+        let Some(editor_data) = self.main_split.active_editor.get_untracked()
+        else {
+            return;
+        };
+        let DocContent::File { path, .. } = editor_data.doc().content.get_untracked()
+        else {
+            return;
+        };
+        let offset = editor_data.cursor().with_untracked(|c| c.offset());
+        let line = editor_data
+            .doc()
+            .buffer
+            .with_untracked(|buffer| buffer.line_of_offset(offset))
+            + 1;
+        let messages = self.messages;
+        self.common.proxy.git_get_remote_file_url(
+            path,
+            create_ext_action(self.scope, move |result| match result {
+                Ok(ProxyResponse::GitGetRemoteFileUrl { file_url }) => {
+                    f(format!("{file_url}#L{line}"));
+                }
+                Ok(_) => {}
+                Err(err) => messages.update(|messages| {
+                    messages.push((
+                        "Remote file URL".to_string(),
+                        ShowMessageParams {
+                            typ: lsp_types::MessageType::ERROR,
+                            message: err.message,
+                        },
+                    ));
+                }),
+            }),
+        );
     }
 
     fn show_message(&self, title: &str, message: &ShowMessageParams) {
