@@ -25,7 +25,10 @@ use floem::{
         WriteSignal, use_context,
     },
     text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, TextLayout},
-    views::editor::{core::buffer::rope_text::RopeText, text::SystemClipboard},
+    views::editor::{
+        core::{buffer::rope_text::RopeText, register::Clipboard},
+        text::SystemClipboard,
+    },
 };
 use im::HashMap;
 use indexmap::IndexMap;
@@ -2872,11 +2875,11 @@ impl WindowTabData {
     }
 
     fn with_active_file_remote_url(&self, f: impl FnOnce(String) + 'static) {
-        let Some(editor_data) = self.main_split.active_editor.get_untracked()
-        else {
+        let Some(editor_data) = self.main_split.active_editor.get_untracked() else {
             return;
         };
-        let DocContent::File { path, .. } = editor_data.doc().content.get_untracked()
+        let DocContent::File { path, .. } =
+            editor_data.doc().content.get_untracked()
         else {
             return;
         };
@@ -2889,21 +2892,24 @@ impl WindowTabData {
         let messages = self.messages;
         self.common.proxy.git_get_remote_file_url(
             path,
-            create_ext_action(self.scope, move |result| match result {
-                Ok(ProxyResponse::GitGetRemoteFileUrl { file_url }) => {
-                    f(format!("{file_url}#L{line}"));
-                }
-                Ok(_) => {}
-                Err(err) => messages.update(|messages| {
-                    messages.push((
-                        "Remote file URL".to_string(),
-                        ShowMessageParams {
-                            typ: lsp_types::MessageType::ERROR,
-                            message: err.message,
-                        },
-                    ));
-                }),
-            }),
+            create_ext_action(
+                self.scope,
+                move |result: Result<ProxyResponse, RpcError>| match result {
+                    Ok(ProxyResponse::GitGetRemoteFileUrl { file_url }) => {
+                        f(format!("{file_url}#L{line}"));
+                    }
+                    Ok(_) => {}
+                    Err(err) => messages.update(|messages| {
+                        messages.push((
+                            "Remote file URL".to_string(),
+                            ShowMessageParams {
+                                typ: lsp_types::MessageType::ERROR,
+                                message: err.message,
+                            },
+                        ));
+                    }),
+                },
+            ),
         );
     }
 
